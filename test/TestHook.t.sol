@@ -57,6 +57,13 @@ contract HookTest is Test, Deployers, GasSnapshot {
         poolId = PoolId.toId(poolKey);
         manager.initialize(poolKey, SQRT_RATIO_1_1);
 
+        emit log("Manager, Pool and token");
+        emit log_address(address(manager));
+        emit log_bytes32(poolId);
+        emit log_address(address(token0));
+        emit log_address(address(token1));
+
+        emit log_uint(SQRT_RATIO_1_1); // 0.5
         // Helpers for interacting with the pool
         modifyPositionRouter = new PoolModifyPositionTest(IPoolManager(address(manager)));
         swapRouter = new PoolSwapTest(IPoolManager(address(manager)));
@@ -75,6 +82,17 @@ contract HookTest is Test, Deployers, GasSnapshot {
         // Approve for swapping
         token0.approve(address(swapRouter), 100 ether);
         token1.approve(address(swapRouter), 100 ether);
+
+        (uint160 sqrtPriceX96, int24 tick, , , ,
+        // uint8 protocolSwapFee,
+        // uint8 protocolWithdrawFee,
+        // uint8 hookSwapFee,
+        // uint8 hookWithdrawFee
+        ) = manager.getSlot0(poolId);
+
+        emit log("price at initial");
+        emit log_uint(sqrtPriceX96);
+        
     }
 
     function testHooks() public {
@@ -82,7 +100,7 @@ contract HookTest is Test, Deployers, GasSnapshot {
         
         // Perform a test swap //
         IPoolManager.SwapParams memory params =
-            IPoolManager.SwapParams({zeroForOne: true, amountSpecified: 100, sqrtPriceLimitX96: SQRT_RATIO_1_2});
+            IPoolManager.SwapParams({zeroForOne: true, amountSpecified: 1 ether, sqrtPriceLimitX96: SQRT_RATIO_1_2});
 
         PoolSwapTest.TestSettings memory testSettings =
             PoolSwapTest.TestSettings({withdrawTokens: true, settleUsingTransfer: true});
@@ -93,6 +111,16 @@ contract HookTest is Test, Deployers, GasSnapshot {
             testSettings
         );
         
+        (uint160 sqrtPriceX96, int24 tick, , , ,
+        // uint8 protocolSwapFee,
+        // uint8 protocolWithdrawFee,
+        // uint8 hookSwapFee,
+        // uint8 hookWithdrawFee
+        ) = manager.getSlot0(poolId);
+
+        emit log("price after swap");
+        emit log_uint(sqrtPriceX96);
+
         assertEq(testHook.swapCount(), 1);
     }
 }
