@@ -8,6 +8,7 @@ import {IERC20Minimal} from "@uniswap/v4-core/contracts/interfaces/external/IERC
 import {IHooks} from "@uniswap/v4-core/contracts/interfaces/IHooks.sol";
 import {Hooks} from "@uniswap/v4-core/contracts/libraries/Hooks.sol";
 import {TickMath} from "@uniswap/v4-core/contracts/libraries/TickMath.sol";
+import {FullMath} from "@uniswap/v4-core/contracts/libraries/FullMath.sol";
 import {PoolManager} from "@uniswap/v4-core/contracts/PoolManager.sol";
 import {IPoolManager} from "@uniswap/v4-core/contracts/interfaces/IPoolManager.sol";
 import {PoolId} from "@uniswap/v4-core/contracts/libraries/PoolId.sol";
@@ -18,6 +19,7 @@ import {Deployers} from "@uniswap/v4-core/test/foundry-tests/utils/Deployers.sol
 import {CurrencyLibrary, Currency} from "@uniswap/v4-core/contracts/libraries/CurrencyLibrary.sol";
 import {TestHook} from "../src/TestHook.sol";
 import {TestImplementation} from "../src/implementation/TestImplementation.sol";
+
 
 contract HookTest is Test, Deployers, GasSnapshot {
     using PoolId for IPoolManager.PoolKey;
@@ -57,7 +59,35 @@ contract HookTest is Test, Deployers, GasSnapshot {
         poolId = PoolId.toId(poolKey);
         manager.initialize(poolKey, SQRT_RATIO_1_1);
 
+        // user parameter
+        uint160 LowerPrice=2240910838991445679564910493696; // 800 in SqrtX96
+        uint160 UpperPrice=2744544057300596215249920589824; // 1200 in SqrtX96
+        uint160 CurrentPrice=2505414483750479251915866636288; // 1000 in SqrtX96
+        uint128 token1USDC=1000e18;
+        
+        // hedge calculation
+        // int24  TickLower= TickMath.getTickAtSqrtRatio(LowerPrice);
+        // int24  TickUpper= TickMath.getTickAtSqrtRatio(UpperPrice);
+        // int24  TickCurren= TickMath.getTickAtSqrtRatio(CurrentPrice);
+
+        (uint256 token0amountV,uint256 token1amountV)=get_liquidity_xy(CurrentPrice,LowerPrice,UpperPrice, token1USDC);
+        (uint256 ValueLower,uint256 ValueUpper)=calculate_hedge_short(CurrentPrice, LowerPrice, UpperPrice, token0amountV,token1amountV, LowerPrice);
+
+               
+        uint256 ShortvalueV=(ValueUpper-ValueLower)/400*1000;
+
+        uint256 Shortvalue=FullMath.mulDiv(ShortvalueV,token1USDC,ShortvalueV+token1USDC);
+        uint256 LPvalue=token1USDC-Shortvalue;
+            
+        
+        // uint160 testprice2= TickMath.getSqrtRatioAtTick(60);
         emit log("Manager, Pool and token");
+        // emit log_int(TickLower);
+        // emit log_int(TickCurren);
+        // emit log_uint(ValueLower);
+        emit log_uint(Shortvalue);
+        emit log_uint(LPvalue);
+
         emit log_address(address(manager));
         emit log_bytes32(poolId);
         emit log_address(address(token0));
@@ -98,6 +128,8 @@ contract HookTest is Test, Deployers, GasSnapshot {
     function testHooks() public {
         assertEq(testHook.swapCount(), 0);
         
+
+
         // Perform a test swap //
         IPoolManager.SwapParams memory params =
             IPoolManager.SwapParams({zeroForOne: true, amountSpecified: 1 ether, sqrtPriceLimitX96: SQRT_RATIO_1_2});
@@ -122,5 +154,32 @@ contract HookTest is Test, Deployers, GasSnapshot {
         emit log_uint(sqrtPriceX96);
 
         assertEq(testHook.swapCount(), 1);
+    }
+
+   
+    function get_liquidity_xy(uint160 sp,uint160 sa,uint160 sb, uint128 Value ) public returns (uint256 x,uint256 y)  { //find_max_x
+        // FullMath.mul()
+        // uint256 numerator1=uint256(sp-sa);
+        // uint256 numerator2=uint256(sp-sa);
+        // uint256 numerator1 = uint256(Value) << FixedPoint96.RESOLUTION;
+        uint256 numerator1=uint256(Value) << 96;
+        uint256 dividorFirst=FullMath.mulDiv(uint256(sp-sa),uint256(sb),uint256(sb-sp));
+        uint256 dividorSecond=FullMath.mulDiv(numerator1,1<<96,(dividorFirst+sp))/sp;
+        x=dividorSecond;
+        y=uint256(Value)-FullMath.mulDiv(uint256(sp),uint256(sp),2**96)*x/2**96;
+        return (x,y);
+        // return x = Value*2**96/((sp-sa)*sp*sb/(sb-sp)+sp*sp);
+    }
+
+    function calculate_hedge_short(uint160 sp, uint160 sa, uint160 sb, uint256 x,uint256 y, uint256 P1) public returns (uint256 x1,uint256 y1) {
+        uint256 liquidity0=FullMath.mulDiv(uint256(sp),uint256(sb),uint256(sb-sp))*x >> 96;
+        uint256 liquidity1=FullMath.mulDiv(y, 1<< 96,uint256(sp-sa)) ;
+        uint256 liquidity;
+        liquidity0<liquidity1 ?  liquidity=liquidity0 :  liquidity= liquidity1;
+        uint256 amountxLower=FullMath.mulDiv(FullMath.mulDiv(liquidity,1<<96,uint256(sa)),uint256(sb-sa),uint256(sb));
+        x1=FullMath.mulDiv(FullMath.mulDiv(amountxLower,sa,1<<96),sa,1<<96);
+        uint256 amountyUpper=FullMath.mulDiv(liquidity,sb-sa,1<<96);
+        y1=amountyUpper;
+        return (x1, y1);
     }
 }
