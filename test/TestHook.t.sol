@@ -55,7 +55,7 @@ contract HookTest is Test, Deployers, GasSnapshot {
         }
 
         // Create the pool
-        poolKey = IPoolManager.PoolKey(Currency.wrap(address(token0)), Currency.wrap(address(token1)), 3000, 60, IHooks(testHook));
+        poolKey = IPoolManager.PoolKey(Currency.wrap(address(token0)), Currency.wrap(address(token1)), 3000, 1, IHooks(testHook)); //tick space change to 1
         poolId = PoolId.toId(poolKey);
         manager.initialize(poolKey, SQRT_RATIO_1_1);
 
@@ -63,31 +63,33 @@ contract HookTest is Test, Deployers, GasSnapshot {
         uint160 LowerPrice=2240910838991445679564910493696; // 800 in SqrtX96
         uint160 UpperPrice=2744544057300596215249920589824; // 1200 in SqrtX96
         uint160 CurrentPrice=2505414483750479251915866636288; // 1000 in SqrtX96
-        uint128 token1USDC=1000e18;
+        uint128 UserInitValue=1000e18;
         
-        // hedge calculation
-        // int24  TickLower= TickMath.getTickAtSqrtRatio(LowerPrice);
-        // int24  TickUpper= TickMath.getTickAtSqrtRatio(UpperPrice);
-        // int24  TickCurren= TickMath.getTickAtSqrtRatio(CurrentPrice);
 
-        (uint256 token0amountV,uint256 token1amountV)=get_liquidity_xy(CurrentPrice,LowerPrice,UpperPrice, token1USDC);
-        (uint256 ValueLower,uint256 ValueUpper)=calculate_hedge_short(CurrentPrice, LowerPrice, UpperPrice, token0amountV,token1amountV, LowerPrice);
 
-               
+        // calculate token0 and token1 amount if UserInitValue all for liquidity
+        (uint256 token0amountV,uint256 token1amountV)=get_liquidity_xy(CurrentPrice,LowerPrice,UpperPrice, UserInitValue);
+        
+        // calculate the liquidity
+        (uint256 liquidityV)=get_liquidity(CurrentPrice, LowerPrice,UpperPrice, token0amountV,token1amountV);
+        
+        // calculate the imploss during the range
+        (uint256 ValueLower,uint256 ValueUpper)=calculate_hedge_short(CurrentPrice, LowerPrice, UpperPrice, liquidityV);
+
+        // calculate the hedge position      
         uint256 ShortvalueV=(ValueUpper-ValueLower)/400*1000;
 
-        uint256 Shortvalue=FullMath.mulDiv(ShortvalueV,token1USDC,ShortvalueV+token1USDC);
-        uint256 LPvalue=token1USDC-Shortvalue;
-            
+        // Proportionally share the UserInitValue to Lp and hedge position
+        uint256 Shortvalue=FullMath.mulDiv(ShortvalueV,UserInitValue,ShortvalueV+UserInitValue);
+        uint256 LPvalue=UserInitValue-Shortvalue;
+        uint256 liquidity=FullMath.mulDiv(liquidityV,UserInitValue,ShortvalueV+UserInitValue);
         
         // uint160 testprice2= TickMath.getSqrtRatioAtTick(60);
         emit log("Manager, Pool and token");
-        // emit log_int(TickLower);
-        // emit log_int(TickCurren);
-        // emit log_uint(ValueLower);
-        emit log_uint(Shortvalue);
-        emit log_uint(LPvalue);
-
+        emit log_uint(token0amountV);
+        emit log_uint(token1amountV);
+        emit log_uint(liquidityV);
+        emit log_uint(liquidity);
         emit log_address(address(manager));
         emit log_bytes32(poolId);
         emit log_address(address(token0));
@@ -103,11 +105,19 @@ contract HookTest is Test, Deployers, GasSnapshot {
         token1.approve(address(modifyPositionRouter), 100 ether);
         token0.mint(address(this), 100 ether);
         token1.mint(address(this), 100 ether);
-        modifyPositionRouter.modifyPosition(poolKey, IPoolManager.ModifyPositionParams(-60, 60, 10 ether));
-        modifyPositionRouter.modifyPosition(poolKey, IPoolManager.ModifyPositionParams(-120, 120, 10 ether));
-        modifyPositionRouter.modifyPosition(
-            poolKey, IPoolManager.ModifyPositionParams(TickMath.minUsableTick(60), TickMath.maxUsableTick(60), 10 ether)
-        );
+
+        // Tick calculation
+        int24  TickLower= TickMath.getTickAtSqrtRatio(LowerPrice);
+        int24  TickUpper= TickMath.getTickAtSqrtRatio(UpperPrice);
+        int24  TickCurrent= TickMath.getTickAtSqrtRatio(CurrentPrice);
+        // Provide LP liquidity to the pool
+        emit log("Lp adding");
+        emit log_int(TickLower);
+        emit log_int(TickUpper);
+        emit log_uint(liquidity);
+
+        modifyPositionRouter.modifyPosition(poolKey, IPoolManager.ModifyPositionParams(TickLower, TickUpper, int256(liquidity)));
+        // // Provide hedge position to aave **
 
         // Approve for swapping
         token0.approve(address(swapRouter), 100 ether);
@@ -170,12 +180,14 @@ contract HookTest is Test, Deployers, GasSnapshot {
         return (x,y);
         // return x = Value*2**96/((sp-sa)*sp*sb/(sb-sp)+sp*sp);
     }
-
-    function calculate_hedge_short(uint160 sp, uint160 sa, uint160 sb, uint256 x,uint256 y, uint256 P1) public returns (uint256 x1,uint256 y1) {
+    function get_liquidity(uint160 sp, uint160 sa, uint160 sb, uint256 x,uint256 y) public returns (uint256 liquidity)  { //find_max_x
         uint256 liquidity0=FullMath.mulDiv(uint256(sp),uint256(sb),uint256(sb-sp))*x >> 96;
         uint256 liquidity1=FullMath.mulDiv(y, 1<< 96,uint256(sp-sa)) ;
-        uint256 liquidity;
         liquidity0<liquidity1 ?  liquidity=liquidity0 :  liquidity= liquidity1;
+        return liquidity;
+    }
+
+    function calculate_hedge_short(uint160 sp, uint160 sa, uint160 sb, uint256 liquidity) public returns (uint256 x1,uint256 y1) {
         uint256 amountxLower=FullMath.mulDiv(FullMath.mulDiv(liquidity,1<<96,uint256(sa)),uint256(sb-sa),uint256(sb));
         x1=FullMath.mulDiv(FullMath.mulDiv(amountxLower,sa,1<<96),sa,1<<96);
         uint256 amountyUpper=FullMath.mulDiv(liquidity,sb-sa,1<<96);
