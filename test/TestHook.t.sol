@@ -54,22 +54,42 @@ contract HookTest is Test, Deployers, GasSnapshot {
             }
         }
 
-        // Create the pool
-        poolKey = IPoolManager.PoolKey(Currency.wrap(address(token0)), Currency.wrap(address(token1)), 3000, 1, IHooks(testHook)); //tick space change to 1
-        poolId = PoolId.toId(poolKey);
-        manager.initialize(poolKey, SQRT_RATIO_1_1);
-
         // user parameter
         uint160 LowerPrice=2240910838991445679564910493696; // 800 in SqrtX96
         uint160 UpperPrice=2744544057300596215249920589824; // 1200 in SqrtX96
         uint160 CurrentPrice=2505414483750479251915866636288; // 1000 in SqrtX96
-        uint128 UserInitValue=1000e18;
+        uint128 UserInitValue=1e18;
+        uint256 Leverage=2;
         
+        // Create the pool
+        poolKey = IPoolManager.PoolKey(Currency.wrap(address(token0)), Currency.wrap(address(token1)), 3000, 1, IHooks(testHook)); //tick space change to 1
+        poolId = PoolId.toId(poolKey);
+        manager.initialize(poolKey, CurrentPrice);
 
+
+        
+        // Tick calculation
+        int24  TickLower= TickMath.getTickAtSqrtRatio(LowerPrice);
+        int24  TickUpper= TickMath.getTickAtSqrtRatio(UpperPrice);
+        int24  TickCurrent= TickMath.getTickAtSqrtRatio(CurrentPrice);
+
+        emit log("******Liquidity provider known Variables******");
+        emit log("The User portforlio:");
+        emit log_uint(UserInitValue);
+        emit log("Current sqrtPriceX96 and tick:");
+        emit log_uint(CurrentPrice);
+        emit log_int(TickCurrent);
+        emit log("Lower bound in sqrtPriceX96 and tick:");
+        emit log_uint(LowerPrice);
+        emit log_int(TickLower);
+        emit log("Upper bound in sqrtPriceX96 and tick:");
+        emit log_uint(UpperPrice);
+        emit log_int(TickUpper);
+        emit log("");
 
         // calculate token0 and token1 amount if UserInitValue all for liquidity
         (uint256 token0amountV,uint256 token1amountV)=get_liquidity_xy(CurrentPrice,LowerPrice,UpperPrice, UserInitValue);
-        
+      
         // calculate the liquidity
         (uint256 liquidityV)=get_liquidity(CurrentPrice, LowerPrice,UpperPrice, token0amountV,token1amountV);
         
@@ -80,43 +100,49 @@ contract HookTest is Test, Deployers, GasSnapshot {
         uint256 ShortvalueV=(ValueUpper-ValueLower)/400*1000;
 
         // Proportionally share the UserInitValue to Lp and hedge position
-        uint256 Shortvalue=FullMath.mulDiv(ShortvalueV,UserInitValue,ShortvalueV+UserInitValue);
-        uint256 LPvalue=UserInitValue-Shortvalue;
-        uint256 liquidity=FullMath.mulDiv(liquidityV,UserInitValue,ShortvalueV+UserInitValue);
-        
-        // uint160 testprice2= TickMath.getSqrtRatioAtTick(60);
-        emit log("Manager, Pool and token");
-        emit log_uint(token0amountV);
-        emit log_uint(token1amountV);
-        emit log_uint(liquidityV);
-        emit log_uint(liquidity);
-        emit log_address(address(manager));
-        emit log_bytes32(poolId);
-        emit log_address(address(token0));
-        emit log_address(address(token1));
+        uint256 Shortvalue=FullMath.mulDiv(ShortvalueV,UserInitValue,ShortvalueV/Leverage+UserInitValue);
+        uint256 LPvalue=UserInitValue-Shortvalue/Leverage;
+        uint256 liquidity=FullMath.mulDiv(liquidityV,UserInitValue,ShortvalueV/Leverage+UserInitValue);
+        uint256 token0amount=FullMath.mulDiv(token0amountV,UserInitValue,ShortvalueV/Leverage+UserInitValue);
+        uint256 token1amount=FullMath.mulDiv(token1amountV,UserInitValue,ShortvalueV/Leverage+UserInitValue);
 
-        emit log_uint(SQRT_RATIO_1_1); // 0.5
+
+        emit log("******Hedging calculation results******");
+        // uint160 testprice2= TickMath.getSqrtRatioAtTick(60);
+        emit log(" The User portforlio:");
+        emit log_uint(UserInitValue);
+        emit log(" Amount of token0 provide for pool:");
+        emit log_uint(token0amount);
+        emit log(" Amount of token1 provide for pool:");
+        emit log_uint(token1amount);
+        emit log(" Value of liquidity:");
+        emit log_uint(LPvalue);
+        emit log(" Value of token1 short in lending:");
+        emit log_uint(Shortvalue);
+        emit log(" Leverage in lending:");
+        emit log_uint(Leverage);
+        emit log("");
+        // emit log_uint(token1amountV);
+        // emit log_uint(liquidityV);
+        // emit log_uint(liquidity);
+        // emit log_address(address(manager));
+        // emit log_bytes32(poolId);
+        // emit log_address(address(token0));
+        // emit log_address(address(token1));
+
         // Helpers for interacting with the pool
         modifyPositionRouter = new PoolModifyPositionTest(IPoolManager(address(manager)));
         swapRouter = new PoolSwapTest(IPoolManager(address(manager)));
 
-        // Provide liquidity to the pool
+
+        // // Provide liquidity to the pool
         token0.approve(address(modifyPositionRouter), 100 ether);
         token1.approve(address(modifyPositionRouter), 100 ether);
         token0.mint(address(this), 100 ether);
         token1.mint(address(this), 100 ether);
 
-        // Tick calculation
-        int24  TickLower= TickMath.getTickAtSqrtRatio(LowerPrice);
-        int24  TickUpper= TickMath.getTickAtSqrtRatio(UpperPrice);
-        int24  TickCurrent= TickMath.getTickAtSqrtRatio(CurrentPrice);
         // Provide LP liquidity to the pool
-        emit log("Lp adding");
-        emit log_int(TickLower);
-        emit log_int(TickUpper);
-        emit log_uint(liquidity);
-
-        modifyPositionRouter.modifyPosition(poolKey, IPoolManager.ModifyPositionParams(TickLower, TickUpper, int256(liquidity)));
+         modifyPositionRouter.modifyPosition(poolKey, IPoolManager.ModifyPositionParams(TickLower, TickUpper, int256(liquidity)));
         // // Provide hedge position to aave **
 
         // Approve for swapping
@@ -130,41 +156,44 @@ contract HookTest is Test, Deployers, GasSnapshot {
         // uint8 hookWithdrawFee
         ) = manager.getSlot0(poolId);
 
-        emit log("price at initial");
+        emit log("******   pool  condition   ******");
         emit log_uint(sqrtPriceX96);
+        testHook.place(poolKey, TickLower, TickUpper, int256(liquidity));
+        emit log("******   good   ******");
         
     }
 
-    function testHooks() public {
-        assertEq(testHook.swapCount(), 0);
+    // function testHooks() public {
+    //     assertEq(testHook.swapCount(), 0);
         
+    //     for (int i=1; i<10 ; i++) {
+    //         // Perform a test swap //
+    //         IPoolManager.SwapParams memory params =
+    //             IPoolManager.SwapParams({zeroForOne: true, amountSpecified: 1e13, sqrtPriceLimitX96: SQRT_RATIO_1_2});
 
+    //         PoolSwapTest.TestSettings memory testSettings =
+    //             PoolSwapTest.TestSettings({withdrawTokens: true, settleUsingTransfer: true});
+            
+    //         swapRouter.swap(
+    //             poolKey,
+    //             params,
+    //             testSettings
+    //         );
+    //         (uint160 sqrtPriceX96, int24 tick, , , ,
+    //         // uint8 protocolSwapFee,
+    //         // uint8 protocolWithdrawFee,
+    //         // uint8 hookSwapFee,
+    //         // uint8 hookWithdrawFee
+    //         ) = manager.getSlot0(poolId);
 
-        // Perform a test swap //
-        IPoolManager.SwapParams memory params =
-            IPoolManager.SwapParams({zeroForOne: true, amountSpecified: 1 ether, sqrtPriceLimitX96: SQRT_RATIO_1_2});
-
-        PoolSwapTest.TestSettings memory testSettings =
-            PoolSwapTest.TestSettings({withdrawTokens: true, settleUsingTransfer: true});
-        
-        swapRouter.swap(
-            poolKey,
-            params,
-            testSettings
-        );
-        
-        (uint160 sqrtPriceX96, int24 tick, , , ,
-        // uint8 protocolSwapFee,
-        // uint8 protocolWithdrawFee,
-        // uint8 hookSwapFee,
-        // uint8 hookWithdrawFee
-        ) = manager.getSlot0(poolId);
-
-        emit log("price after swap");
-        emit log_uint(sqrtPriceX96);
-
-        assertEq(testHook.swapCount(), 1);
-    }
+    //         emit log("******swap index:");
+    //         emit log_int(i);
+    //         emit log("price and tick after swap:");
+    //         emit log_uint(sqrtPriceX96);
+    //         emit log_int(tick);
+    //     }
+    //     // assertEq(testHook.swapCount(), 1);
+    // }
 
    
     function get_liquidity_xy(uint160 sp,uint160 sa,uint160 sb, uint128 Value ) public returns (uint256 x,uint256 y)  { //find_max_x

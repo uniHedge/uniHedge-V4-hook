@@ -12,6 +12,8 @@ contract TestHook is BaseHook {
     using PoolId for IPoolManager.PoolKey;
     uint256 public swapCount;
 
+    error ZeroLiquidity();
+
     constructor(IPoolManager _poolManager) BaseHook(_poolManager) {}
 
     function getHooksCalls() public pure override returns (Hooks.Calls memory) {
@@ -54,5 +56,13 @@ contract TestHook is BaseHook {
             // rebalance pool
         }
         return BaseHook.afterSwap.selector;
+    }
+
+    function place(IPoolManager.PoolKey memory key, int24 TickLower, int24 TickUpper, int256 liquidity)
+        external
+        onlyValidPools(key.hooks)
+    {  
+        if (liquidity == 0) revert ZeroLiquidity();
+
     }
 }
