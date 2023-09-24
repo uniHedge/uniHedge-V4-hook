@@ -57,7 +57,7 @@ contract TestHook is BaseHook {
         ) = poolManager.getSlot0(poolId);
         uint160 LowerPrice = 2240910838991445679564910493696; // ~ 1:1
         if (tick < LowerBound) {
-            OutofRange=1; // close the position here
+            OutofRange=1; // close should be directly called here, however error always occour, so we call the outofrangeflge, to trigger position close in test contract.
         }
         if (tick > UpperBound) {
             OutofRange=2; // close the position here
